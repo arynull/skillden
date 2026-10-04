@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check src/
+      - run: ruff format --check src/
+
+  install-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Clean install from source
+        run: |
+          python -m venv /tmp/ci-venv
+          /tmp/ci-venv/bin/pip install --quiet .
+          /tmp/ci-venv/bin/skillden --version
+      - name: CLI smoke test (registry add / search / install / list / uninstall)
+        run: |
+          export SKILLDEN_DATA_DIR="$(mktemp -d)"
+          SD=/tmp/ci-venv/bin/skillden
+          BUNDLE="$(mktemp -d)"
+          printf '# Demo skill\nDo demo things.\n' > "$BUNDLE/SKILL.md"
+          cat > "$BUNDLE/skill.json" <<'EOF'
+          {"name": "acme/demo", "version": "0.1.0", "description": "Demo skill for CI smoke",
+           "entry": "SKILL.md", "files": ["SKILL.md", "skill.json"], "license": "MIT"}
+          EOF
+          $SD registry add "$BUNDLE/skill.json" --bundle "$BUNDLE"
+          $SD search demo | grep -q "acme/demo"
+          $SD info acme/demo | grep -q "0.1.0"
+          $SD install acme/demo --agent generic
+          test -f .skills/demo/SKILL.md
+          $SD list | grep -q "acme/demo"
+          $SD uninstall acme/demo --agent generic
+          test ! -d .skills/demo
+          echo "smoke OK"

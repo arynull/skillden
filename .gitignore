@@ -1,0 +1,28 @@
+# skillden — files not part of the distribution
+
+# project docs (kept alongside the repo, not published)
+MISSION.md
+RUNBOOK.md
+SPEC.md
+PROGRESS.md
+ERROR_LOG.md
+RESEARCH.md
+prompts/
+
+# local test suite (not published)
+tests/
+smoke.sh
+
+# aider session files
+.aider*
+
+# local secrets and scratch config
+.telegram.env
+.gate.env
+
+# python
+__pycache__/
+*.egg-info/
+dist/
+build/
+.venv/
