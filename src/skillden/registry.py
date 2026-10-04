@@ -50,6 +50,7 @@ class Registry:
                     skill_id INTEGER NOT NULL REFERENCES skills(id),
                     version TEXT NOT NULL,
                     content_sha256 TEXT NOT NULL,
+                    zip_sha256 TEXT,
                     source_url TEXT,
                     manifest_json TEXT NOT NULL,
                     published_at TEXT NOT NULL,
@@ -69,6 +70,9 @@ class Registry:
                 )
                 """
             )
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(versions)")]
+            if "zip_sha256" not in cols:
+                conn.execute("ALTER TABLE versions ADD COLUMN zip_sha256 TEXT")
 
     @staticmethod
     def _now_iso():
@@ -139,6 +143,12 @@ class Registry:
             with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
                 for rel in manifest["files"]:
                     zf.write(bundle_path / rel, rel)
+        zip_sha256 = hashlib.sha256(zip_path.read_bytes()).hexdigest()
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE versions SET zip_sha256 = ? WHERE skill_id = ? AND version = ?",
+                (zip_sha256, skill_id, version),
+            )
         return name, version
 
     def bundle_zip(self, content_sha256) -> Path:
@@ -172,6 +182,7 @@ class Registry:
                 """
                 SELECT v.id as id, v.skill_id as skill_id, s.name as name,
                        v.version as version, v.content_sha256 as content_sha256,
+                       v.zip_sha256 as zip_sha256,
                        v.source_url as source_url, v.manifest_json as manifest_json,
                        v.published_at as published_at
                 FROM versions v JOIN skills s ON v.skill_id = s.id

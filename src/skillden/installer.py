@@ -1,12 +1,15 @@
+import contextlib
 import hashlib
 import os
 import shutil
+import sys
 import tempfile
 import zipfile
 from pathlib import Path
 
 from .agents import AGENTS, skill_dir
 from .registry import RegistryError
+from .scanner import SecurityBlocked, scan_bundle
 
 
 class IntegrityError(Exception):
@@ -50,7 +53,9 @@ def _check_agent(agent):
         raise RegistryError(f"unknown agent: {agent}")
 
 
-def install(registry, name, version=None, agent="generic", force=False) -> Path:
+def install(
+    registry, name, version=None, agent="generic", force=False, allow_risky=False
+) -> Path:
     from .agents import AGENTS as _AGENTS
     from .agents import skill_dir as _skill_dir
     from .registry import RegistryError as _RegistryError
@@ -102,6 +107,11 @@ def install(registry, name, version=None, agent="generic", force=False) -> Path:
     parent.mkdir(parents=True, exist_ok=True)
 
     bundle_zip_path = registry.bundle_zip(content_sha256)
+    expected_zip_sha256 = rec.get("zip_sha256")
+    if expected_zip_sha256:
+        actual_zip_sha256 = hashlib.sha256(bundle_zip_path.read_bytes()).hexdigest()
+        if actual_zip_sha256 != expected_zip_sha256:
+            raise IntegrityError(f"bundle zip hash mismatch for {name} {version}")
 
     tmp = tempfile.mkdtemp(dir=str(parent), prefix=".tmp-")
     success = False
@@ -120,6 +130,15 @@ def install(registry, name, version=None, agent="generic", force=False) -> Path:
                 f"content hash mismatch for {name} {version}: "
                 f"expected {content_sha256}, got {recomputed}"
             )
+        scan_report = scan_bundle(Path(tmp), rec.get("manifest") or {})
+        if scan_report.verdict == "blocked" and not allow_risky:
+            raise SecurityBlocked(scan_report)
+        if scan_report.verdict != "clean":
+            print(
+                f"warning: security scan {scan_report.verdict}: "
+                f"{scan_report.summary()}",
+                file=sys.stderr,
+            )
 
         if dest.exists() or dest.is_symlink():
             if dest.is_dir() and not dest.is_symlink():
@@ -135,6 +154,48 @@ def install(registry, name, version=None, agent="generic", force=False) -> Path:
     finally:
         if not success:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+@contextlib.contextmanager
+def extract_bundle(registry, name, version=None):
+    """Yield (bundle_dir, manifest) for a registry version, integrity-verified.
+
+    Verifies the stored zip sha256 (when present), rejects unsafe zip
+    member names, extracts to a temp dir, and verifies the content sha256.
+    Raises RegistryError for unknown skill/version, IntegrityError on any
+    mismatch or unsafe member.
+    """
+    versions = registry.list_versions(name)
+    if version is None:
+        if not versions:
+            raise RegistryError(f"unknown skill: {name}")
+        version = versions[-1]
+    elif version not in versions:
+        raise RegistryError(f"unknown version: {name} {version}")
+    rec = registry.get_version(name, version)
+    if rec is None:
+        raise RegistryError(f"unknown version: {name} {version}")
+    zip_path = registry.bundle_zip(rec["content_sha256"])
+    expected = rec.get("zip_sha256")
+    if expected and hashlib.sha256(zip_path.read_bytes()).hexdigest() != expected:
+        raise IntegrityError(f"bundle zip hash mismatch for {name} {version}")
+    with tempfile.TemporaryDirectory(prefix="skillden-audit-") as tmp:
+        try:
+            with zipfile.ZipFile(str(zip_path), "r") as zf:
+                for member in zf.namelist():
+                    mp = Path(member)
+                    if mp.is_absolute() or ".." in mp.parts:
+                        raise IntegrityError(
+                            f"unsafe zip member for {name} {version}: {member}"
+                        )
+                zf.extractall(tmp)
+        except zipfile.BadZipFile as e:
+            raise IntegrityError(
+                f"bundle zip is corrupt for {name} {version}: {e}"
+            ) from e
+        if _hash_dir(Path(tmp)) != rec["content_sha256"]:
+            raise IntegrityError(f"content hash mismatch for {name} {version}")
+        yield Path(tmp), rec.get("manifest") or {}
 
 
 def uninstall(registry, name, agent="generic"):
