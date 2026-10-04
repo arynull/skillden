@@ -36,7 +36,7 @@ jobs:
           BUNDLE="$(mktemp -d)"
           printf '# Demo skill\nDo demo things.\n' > "$BUNDLE/SKILL.md"
           cat > "$BUNDLE/skill.json" <<'EOF'
-          {"name": "acme/demo", "version": "0.1.0", "description": "Demo skill for CI smoke",
+          {"name": "acme/demo", "version": "0.1.0", "author": "acme", "description": "Demo skill for CI smoke",
            "entry": "SKILL.md", "files": ["SKILL.md", "skill.json"], "license": "MIT"}
           EOF
           $SD registry add "$BUNDLE/skill.json" --bundle "$BUNDLE"
