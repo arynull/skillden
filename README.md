@@ -83,19 +83,41 @@ Example:
 
 If `@version` is omitted the latest registered version is shown.
 
+### audit
+
+Scan a registered skill bundle for security issues.
+
+Usage:
+
+    audit <author/skill>[@version]
+
+Example:
+
+    skillden audit acme/demo
+
+Prints the verdict (clean, warn, or blocked) and one line per finding
+with severity, rule id, file, line, and message. If `@version` is omitted
+the latest registered version is scanned. Exit code 3 means the scan
+found high-severity findings.
+
 ### install
 
 Install a skill from the registry.
 
 Usage:
 
-    install <author/skill>[@version] [--agent {claude-code,cursor,generic}] [--force]
+    install <author/skill>[@version] [--agent {claude-code,cursor,generic}] [--force] [--allow-risky]
 
 Example:
 
     skillden install acme/demo@0.1.0 --agent claude-code
 
 Copies verified bundle files to the agent skills directory. Use `--force` to overwrite an existing install.
+
+Every install is scanned before files are copied. High-severity findings
+block the install with exit code 3 and leave nothing behind. Medium and
+low findings print a warning and the install proceeds. Use `--allow-risky`
+to install despite a blocked scan.
 
 ### list
 
@@ -144,6 +166,9 @@ Example:
 1 means usage error or not found, for example unknown skill, unknown version, or bad arguments.
 
 2 means integrity failure, for example sha256 mismatch or corrupt registry data. Failed installs do not leave partial output.
+
+3 means a security scan blocked the operation, for example high-severity
+findings in the skill bundle. Use `--allow-risky` with install to override.
 
 ## skill.json Manifest Format
 
@@ -209,7 +234,7 @@ The bundle directory for the above manifest would contain:
 
 Install locations are per skill name. For example installing `acme/demo` for `claude-code` creates `~/.claude/skills/acme-demo` content or an equivalent namespaced directory.
 
-If `--agent` is not given, `claude-code` is used as the default target.
+If `--agent` is not given, `generic` is used as the default target.
 
 ## Data Directory and Integrity
 
@@ -226,4 +251,9 @@ Integrity model:
 - Every `install` re-hashes bundle content before copying.
 - Installs are fail-closed: any mismatch aborts with exit code 2.
 - Installs write to a temporary directory first, then complete with an atomic move.
+- The bundle zip hash is stored at `registry add` time and re-verified
+  before extraction on every install.
+- Every install scans the verified bundle for prompt-injection,
+  exfiltration, remote-code-execution, and destructive patterns; high
+  findings block the install (exit code 3) unless `--allow-risky` is given.
 - No partial or unverified files are left in the destination on failure.
