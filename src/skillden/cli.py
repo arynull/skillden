@@ -5,17 +5,12 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from skillden.installer import (
-    IntegrityError,
-)
-from skillden.installer import (
-    install as installer_install,
-)
-from skillden.installer import (
-    uninstall as installer_uninstall,
-)
+from skillden.installer import IntegrityError, SecurityBlocked, extract_bundle
+from skillden.installer import install as installer_install
+from skillden.installer import uninstall as installer_uninstall
 from skillden.manifest import ManifestError, load_manifest, validate_bundle
 from skillden.registry import Registry, RegistryError
+from skillden.scanner import scan_bundle
 
 try:
     from skillden.agents import AGENTS
@@ -26,7 +21,7 @@ except ImportError:  # pragma: no cover
         "generic": {},
     }
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 AGENT_CHOICES = ["claude-code", "cursor", "generic"]
 
 
@@ -105,9 +100,11 @@ def _extract_search_result(reg, r):
     return str(r), ""
 
 
-def _do_install(name, version, agent, force):
+def _do_install(name, version, agent, force, allow_risky=False):
     reg = Registry()
-    return installer_install(reg, name, version, agent=agent, force=force)
+    return installer_install(
+        reg, name, version, agent=agent, force=force, allow_risky=allow_risky
+    )
 
 
 def _do_uninstall(name, agent):
@@ -133,6 +130,15 @@ def _cmd_registry_add(args) -> int:
         except TypeError:
             name, version = reg.add_skill(args.bundle)
         print(f"added {name}@{version}")
+        try:
+            _report = scan_bundle(Path(args.bundle), manifest)
+            if _report.verdict != "clean":
+                print(
+                    f"warning: security scan {_report.verdict}: {_report.summary()}",
+                    file=sys.stderr,
+                )
+        except (OSError, ValueError, TypeError):
+            pass
         return 0
     except (ManifestError, RegistryError) as e:
         print(f"error: {e}", file=sys.stderr)
@@ -235,15 +241,43 @@ def _cmd_info(args) -> int:
     return 0
 
 
+def _cmd_audit(args) -> int:
+    name, ver = _parse_skill_ref(args.skill)
+    reg = Registry()
+    try:
+        with extract_bundle(reg, name, ver) as (bundle_dir, manifest):
+            report = scan_bundle(bundle_dir, manifest)
+    except RegistryError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    except IntegrityError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    print(f"verdict: {report.verdict}")
+    print(report.summary())
+    for f in report.findings:
+        loc = f"{f.file}:{f.line}" if f.line else f.file
+        print(f"{f.severity.upper()}  {f.rule_id}  {loc}  {f.message}")
+    return 3 if report.verdict == "blocked" else 0
+
+
 def _cmd_install(args) -> int:
     name, ver = _parse_skill_ref(args.skill)
     agent = args.agent
     force = bool(getattr(args, "force", False))
+    allow_risky = bool(getattr(args, "allow_risky", False))
     try:
-        dest = _do_install(name, ver, agent, force)
+        dest = _do_install(name, ver, agent, force, allow_risky)
     except IntegrityError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
+    except SecurityBlocked as e:
+        print(
+            f"error: security scan blocked install of {name}: "
+            f"{e.report.summary()} (use --allow-risky to override)",
+            file=sys.stderr,
+        )
+        return 3
     except RegistryError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
@@ -311,7 +345,7 @@ def _cmd_uninstall(args) -> int:
 
 def build_parser():
     parser = argparse.ArgumentParser(prog="skillden")
-    parser.add_argument("--version", action="version", version="skillden 0.1.0")
+    parser.add_argument("--version", action="version", version="skillden 0.2.0")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_reg = sub.add_parser("registry", help="registry operations")
@@ -329,6 +363,10 @@ def build_parser():
     p_info.add_argument("skill", help="author/skill[@version]")
     p_info.set_defaults(func=_cmd_info)
 
+    p_audit = sub.add_parser("audit", help="scan a skill bundle for security issues")
+    p_audit.add_argument("skill", help="author/skill[@version]")
+    p_audit.set_defaults(func=_cmd_audit)
+
     p_install = sub.add_parser("install", help="install a skill")
     p_install.add_argument("skill", help="author/skill[@version]")
     p_install.add_argument(
@@ -338,6 +376,11 @@ def build_parser():
         help="target agent",
     )
     p_install.add_argument("--force", action="store_true", help="force reinstall")
+    p_install.add_argument(
+        "--allow-risky",
+        action="store_true",
+        help="install even if the security scan blocks it",
+    )
     p_install.set_defaults(func=_cmd_install)
 
     p_list = sub.add_parser("list", help="list installs")
