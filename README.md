@@ -1,0 +1,229 @@
+# skillden
+
+skillden is the package manager for agent skills.
+
+## Requirements
+
+Python 3.12+ is required.
+
+No other runtime dependencies are required for basic use.
+
+## Install
+
+Install from a local checkout:
+
+    pip install .
+
+After install the `skillden` command should be on your PATH.
+
+## Quickstart
+
+Create a bundle directory containing a `SKILL.md` file and a `skill.json` manifest.
+
+A minimal bundle layout:
+
+    my-skill/SKILL.md
+    my-skill/skill.json
+
+Publish the bundle to the local registry:
+
+    skillden registry add skill.json --bundle .
+
+Install the placeholder example skill:
+
+    skillden install acme/demo
+
+Show installed skills:
+
+    skillden list
+
+All examples in this file use placeholder data only, such as `acme/demo`.
+
+## Command Reference
+
+### registry add
+
+Add a skill bundle to the local registry.
+
+Usage:
+
+    registry add <skill.json> --bundle <dir>
+
+Example:
+
+    skillden registry add skill.json --bundle ./my-skill
+
+Registers the version described by `skill.json` and stores hashed bundle content.
+
+### search
+
+Search the registry by name and description.
+
+Usage:
+
+    search <query>
+
+Example:
+
+    skillden search demo
+
+Lists matching `author/skill` entries with versions and descriptions. An empty query lists all entries.
+
+### info
+
+Show details for a skill.
+
+Usage:
+
+    info <author/skill>[@version]
+
+Example:
+
+    skillden info acme/demo@0.1.0
+
+If `@version` is omitted the latest registered version is shown.
+
+### install
+
+Install a skill from the registry.
+
+Usage:
+
+    install <author/skill>[@version] [--agent {claude-code,cursor,generic}] [--force]
+
+Example:
+
+    skillden install acme/demo@0.1.0 --agent claude-code
+
+Copies verified bundle files to the agent skills directory. Use `--force` to overwrite an existing install.
+
+### list
+
+List installed skills.
+
+Usage:
+
+    list
+
+Example:
+
+    skillden list
+
+Shows installed `author/skill` entries, versions, and install locations.
+
+### uninstall
+
+Remove an installed skill.
+
+Usage:
+
+    uninstall <author/skill> [--agent {claude-code,cursor,generic}]
+
+Example:
+
+    skillden uninstall acme/demo --agent claude-code
+
+Removes the installed files for the skill. If `--agent` is omitted the default lookup order is used.
+
+### --version
+
+Print the skillden version.
+
+Usage:
+
+    --version
+
+Example:
+
+    skillden --version
+
+### Exit Codes
+
+0 means success.
+
+1 means usage error or not found, for example unknown skill, unknown version, or bad arguments.
+
+2 means integrity failure, for example sha256 mismatch or corrupt registry data. Failed installs do not leave partial output.
+
+## skill.json Manifest Format
+
+`skill.json` describes one version of a skill bundle.
+
+| Field | Required | Description |
+| --- | --- | --- |
+| name | required | Skill identifier in `author/skill` form |
+| version | required | Version string |
+| description | required | Short human-readable description |
+| entry | required | Entry file inside the bundle, usually `SKILL.md` |
+| files | required | List of bundle files relative to `--bundle` dir |
+| license | optional | License identifier, for example `MIT` |
+| agents | optional | List of supported agents from `claude-code`, `cursor`, `generic` |
+| requires | optional | Map of prerequisite skills to version ranges |
+
+Name rules:
+
+- Must be `author/skill` with exactly one slash.
+- Author and skill parts must be lowercase.
+- Each part must start with a letter or digit.
+- Each part may contain letters, digits, `-`, and `_`.
+- Each part must be 2 to 64 characters long.
+
+Version rules:
+
+- Must be `X.Y.Z` numeric dot-separated form.
+- Each component must be a non-negative integer without leading spaces.
+- Examples of valid versions are `0.1.0` and `1.2.3`.
+- Prerelease and build suffixes are not accepted.
+
+Example manifest:
+
+    {
+        "name": "acme/demo",
+        "version": "0.1.0",
+        "description": "Demo skill for skillden",
+        "entry": "SKILL.md",
+        "files": [
+            "SKILL.md"
+        ],
+        "license": "MIT",
+        "agents": [
+            "claude-code",
+            "cursor",
+            "generic"
+        ],
+        "requires": {}
+    }
+
+The bundle directory for the above manifest would contain:
+
+    SKILL.md
+    skill.json
+
+## Agent Support
+
+| Agent | Install Location |
+| --- | --- |
+| claude-code | ~/.claude/skills |
+| cursor | ~/.cursor/skills |
+| generic | ./.skills |
+
+Install locations are per skill name. For example installing `acme/demo` for `claude-code` creates `~/.claude/skills/acme-demo` content or an equivalent namespaced directory.
+
+If `--agent` is not given, `claude-code` is used as the default target.
+
+## Data Directory and Integrity
+
+Registry data and caches live under `~/.skillden`.
+
+Override the location with the environment variable:
+
+    SKILLDEN_DATA_DIR=/tmp/skillden-data skillden list
+
+Integrity model:
+
+- Every bundle file is hashed with sha256 at `registry add` time.
+- Hashes are stored in the registry alongside sizes and paths.
+- Every `install` re-hashes bundle content before copying.
+- Installs are fail-closed: any mismatch aborts with exit code 2.
+- Installs write to a temporary directory first, then complete with an atomic move.
+- No partial or unverified files are left in the destination on failure.

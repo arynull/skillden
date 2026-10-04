@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skillden"
+version = "0.1.0"
+description = "Package manager for agent skills"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+skillden = "skillden.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+# Declared lint standard (v0.1.0). Pinned explicitly so CI stays
+# reproducible regardless of ruff's shifting default rule set.
+# BLE (blind-except) and S110/S112 are intentionally not enabled:
+# the CLI uses defensive probing try/excepts by design; error paths
+# are hardened separately under the v0.2.0 security-scanner milestone.
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF"]
