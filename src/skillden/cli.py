@@ -21,7 +21,27 @@ except ImportError:  # pragma: no cover
         "generic": {},
     }
 
-VERSION = "0.2.0"
+try:
+    from skillden.lockfile import write_lock
+except ImportError:  # pragma: no cover
+
+    def write_lock(*args, **kwargs):
+        raise OSError("lockfile subsystem unavailable")
+
+
+try:
+    from skillden.resolver import ResolutionError
+    from skillden.resolver import resolve as _resolve_skill
+except ImportError:  # pragma: no cover
+
+    class ResolutionError(Exception):  # type: ignore[no-redef]
+        pass
+
+    def _resolve_skill(*args, **kwargs):
+        raise ResolutionError("resolver subsystem unavailable")
+
+
+VERSION = "0.3.0"
 AGENT_CHOICES = ["claude-code", "cursor", "generic"]
 
 
@@ -100,16 +120,48 @@ def _extract_search_result(reg, r):
     return str(r), ""
 
 
-def _do_install(name, version, agent, force, allow_risky=False):
+def _do_install(name, version, agent, force, allow_risky=False, with_deps=True):
     reg = Registry()
     return installer_install(
-        reg, name, version, agent=agent, force=force, allow_risky=allow_risky
+        reg,
+        name,
+        version,
+        agent=agent,
+        force=force,
+        allow_risky=allow_risky,
+        with_deps=with_deps,
     )
 
 
 def _do_uninstall(name, agent):
     reg = Registry()
     return installer_uninstall(reg, name, agent=agent)
+
+
+def _installed_version(reg, name, agent):
+    try:
+        installs = reg.list_installs() or []
+    except (RegistryError, sqlite3.Error, OSError):
+        return None
+    for inst in installs:
+        iname, iver, iagent, _ipath = _normalize_install(inst)
+        if iname == name and iagent == agent:
+            return iver
+    return None
+
+
+def _write_lock_file(reg, root, constraint, resolved):
+    pins = []
+    for n, v in resolved:
+        try:
+            rec = _safe_get_version(reg, n, v)
+        except (RegistryError, sqlite3.Error, OSError, ValueError, TypeError):
+            rec = None
+        digest = ""
+        if isinstance(rec, dict):
+            digest = rec.get("content_sha256") or rec.get("content_sha") or ""
+        pins.append((n, v, str(digest)))
+    write_lock(Path("skillden.lock"), root, constraint, pins)
 
 
 def _cmd_registry_add(args) -> int:
@@ -266,8 +318,9 @@ def _cmd_install(args) -> int:
     agent = args.agent
     force = bool(getattr(args, "force", False))
     allow_risky = bool(getattr(args, "allow_risky", False))
+    with_deps = not bool(getattr(args, "no_deps", False))
     try:
-        dest = _do_install(name, ver, agent, force, allow_risky)
+        dest = _do_install(name, ver, agent, force, allow_risky, with_deps)
     except IntegrityError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -278,24 +331,20 @@ def _cmd_install(args) -> int:
             file=sys.stderr,
         )
         return 3
+    except ResolutionError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
     except RegistryError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
-    disp_ver = ver
+    disp_ver = _installed_version(Registry(), name, agent)
     if disp_ver is None:
-        try:
-            reg = Registry()
-            installs = reg.list_installs() or []
-            for inst in installs:
-                iname, iver, iagent, _p = _normalize_install(inst)
-                if iname == name and iagent == agent:
-                    disp_ver = iver
-                    break
-            if disp_ver is None:
+        if ver is None:
+            try:
+                reg = Registry()
                 try:
                     vers = reg.list_versions(name)
-                    if vers:
-                        disp_ver = vers[-1]
+                    disp_ver = vers[-1] if vers else "unknown"
                 except (
                     RegistryError,
                     sqlite3.Error,
@@ -305,12 +354,95 @@ def _cmd_install(args) -> int:
                 ) as e:
                     # Ignore lookup failure; disp_ver stays None.
                     _ = e
-        except (RegistryError, sqlite3.Error, OSError, ValueError, TypeError) as e:
-            # Ignore display-version lookup failures.
-            _ = e
+                    disp_ver = "unknown"
+            except (RegistryError, sqlite3.Error, OSError, ValueError, TypeError) as e:
+                # Ignore display-version lookup failures.
+                _ = e
+                disp_ver = "unknown"
+        else:
+            disp_ver = ver
         if disp_ver is None:
             disp_ver = "unknown"
     print(f"installed {name}@{disp_ver} -> {dest}")
+    constraint = ver if ver is not None else "*"
+    try:
+        reg2 = Registry()
+        try:
+            resolved = _resolve_skill(reg2, name, constraint)
+        except (ResolutionError, RegistryError) as e:
+            print(
+                f"warning: failed to resolve for lockfile: {e}",
+                file=sys.stderr,
+            )
+            return 0
+        try:
+            _write_lock_file(reg2, name, constraint, resolved)
+        except OSError as e:
+            print(
+                f"warning: failed to write lockfile: {e}",
+                file=sys.stderr,
+            )
+    except OSError as e:
+        print(f"warning: failed to write lockfile: {e}", file=sys.stderr)
+    return 0
+
+
+def _cmd_update(args) -> int:
+    name, ver = _parse_skill_ref(args.skill)
+    agent = args.agent
+    allow_risky = bool(getattr(args, "allow_risky", False))
+    constraint = ver if ver is not None else "*"
+    reg = Registry()
+    try:
+        pins = _resolve_skill(reg, name, constraint)
+    except ResolutionError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    except RegistryError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    changed: list[tuple[str, str, str]] = []
+    for n, v in pins:
+        old = _installed_version(reg, n, agent)
+        if old == v:
+            continue
+        try:
+            installer_install(
+                reg,
+                n,
+                v,
+                agent=agent,
+                force=True,
+                allow_risky=allow_risky,
+                with_deps=False,
+            )
+        except IntegrityError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        except SecurityBlocked as e:
+            print(
+                f"error: security scan blocked install of {n}: "
+                f"{e.report.summary()} (use --allow-risky to override)",
+                file=sys.stderr,
+            )
+            return 3
+        except ResolutionError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        except RegistryError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        old_display = old if old is not None else "none"
+        changed.append((n, old_display, v))
+    try:
+        _write_lock_file(reg, name, constraint, pins)
+    except OSError as e:
+        print(f"warning: failed to write lockfile: {e}", file=sys.stderr)
+    if not changed:
+        print("up to date")
+    else:
+        for n, old_v, new_v in changed:
+            print(f"updated {n} {old_v} -> {new_v}")
     return 0
 
 
@@ -345,7 +477,7 @@ def _cmd_uninstall(args) -> int:
 
 def build_parser():
     parser = argparse.ArgumentParser(prog="skillden")
-    parser.add_argument("--version", action="version", version="skillden 0.2.0")
+    parser.add_argument("--version", action="version", version="skillden 0.3.0")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_reg = sub.add_parser("registry", help="registry operations")
@@ -368,7 +500,7 @@ def build_parser():
     p_audit.set_defaults(func=_cmd_audit)
 
     p_install = sub.add_parser("install", help="install a skill")
-    p_install.add_argument("skill", help="author/skill[@version]")
+    p_install.add_argument("skill", help="author/skill[@spec]")
     p_install.add_argument(
         "--agent",
         choices=AGENT_CHOICES,
@@ -381,7 +513,27 @@ def build_parser():
         action="store_true",
         help="install even if the security scan blocks it",
     )
+    p_install.add_argument(
+        "--no-deps",
+        action="store_true",
+        help="install only the named skill",
+    )
     p_install.set_defaults(func=_cmd_install)
+
+    p_update = sub.add_parser("update", help="update a skill")
+    p_update.add_argument("skill", help="author/skill[@constraint]")
+    p_update.add_argument(
+        "--agent",
+        choices=AGENT_CHOICES,
+        default="generic",
+        help="target agent",
+    )
+    p_update.add_argument(
+        "--allow-risky",
+        action="store_true",
+        help="install even if the security scan blocks it",
+    )
+    p_update.set_defaults(func=_cmd_update)
 
     p_list = sub.add_parser("list", help="list installs")
     p_list.set_defaults(func=_cmd_list)
