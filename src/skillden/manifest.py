@@ -8,6 +8,9 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from .resolver import ConstraintError as _ConstraintError
+from .resolver import parse_constraint as _parse_constraint
+
 __all__ = ["ManifestError", "load_manifest", "validate_bundle"]
 
 
@@ -131,13 +134,24 @@ def load_manifest(path: str | Path) -> dict[str, Any]:
 
     if "requires" in data:
         requires = data["requires"]
-        if not isinstance(requires, list):
-            raise ManifestError("Invalid 'requires': must be a list of strings")
-        for r in requires:
-            if not isinstance(r, str) or not r.strip():
+        if not isinstance(requires, dict):
+            raise ManifestError(
+                "Invalid 'requires': must be a mapping of skill to version constraint"
+            )
+        for key, value in requires.items():
+            if not isinstance(key, str) or not _NAME_RE.match(key):
+                raise ManifestError(f"Invalid 'requires': bad skill name {key!r}")
+            if not isinstance(value, str) or not value.strip():
                 raise ManifestError(
-                    "Invalid 'requires': each entry must be a non-empty string"
+                    f"Invalid 'requires': bad constraint for {key!r}: "
+                    "must be a non-empty string"
                 )
+            try:
+                _parse_constraint(value)
+            except _ConstraintError as exc:
+                raise ManifestError(
+                    f"Invalid 'requires': bad constraint for {key!r}: {exc}"
+                ) from exc
 
     return data
 
