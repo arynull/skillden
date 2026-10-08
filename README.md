@@ -106,13 +106,25 @@ Install a skill from the registry.
 
 Usage:
 
-    install <author/skill>[@version] [--agent {claude-code,cursor,generic}] [--force] [--allow-risky]
+    install <author/skill>[@spec] [--agent {claude-code,cursor,generic}] [--force] [--allow-risky] [--no-deps]
 
 Example:
 
     skillden install acme/demo@0.1.0 --agent claude-code
 
 Copies verified bundle files to the agent skills directory. Use `--force` to overwrite an existing install.
+
+`@spec` may be an exact version (`acme/demo@1.2.0`) or a version
+constraint (`acme/demo@^1.0.0`); the newest registered version satisfying
+the constraint is installed. Dependencies listed in the skill's
+`requires` map are resolved and installed first (transitively), each
+through the same integrity and security gates. Use `--no-deps` to
+install only the named skill. Every successful install writes
+`./skillden.lock` pinning the resolved versions.
+
+Example:
+
+    skillden install acme/demo@^1.0.0 --agent claude-code
 
 Every install is scanned before files are copied. High-severity findings
 block the install with exit code 3 and leave nothing behind. Medium and
@@ -146,6 +158,22 @@ Example:
     skillden uninstall acme/demo --agent claude-code
 
 Removes the installed files for the skill. If `--agent` is omitted the default lookup order is used.
+
+### update
+
+Re-resolve a skill's dependencies to the newest satisfying versions.
+
+Usage:
+
+    update <author/skill>[@constraint] [--agent {claude-code,cursor,generic}] [--allow-risky]
+
+Example:
+
+    skillden update acme/demo
+
+Reinstalls any dependency whose resolved version changed and rewrites
+`./skillden.lock`. If `@constraint` is omitted every dependency floats
+to its newest registered version.
 
 ### --version
 
@@ -183,7 +211,7 @@ findings in the skill bundle. Use `--allow-risky` with install to override.
 | files | required | List of bundle files relative to `--bundle` dir |
 | license | optional | License identifier, for example `MIT` |
 | agents | optional | List of supported agents from `claude-code`, `cursor`, `generic` |
-| requires | optional | Map of prerequisite skills to version ranges |
+| requires | optional | Map of prerequisite skill to version constraint, for example {"acme/base": "^1.2.0"} |
 
 Name rules:
 
@@ -216,13 +244,34 @@ Example manifest:
             "cursor",
             "generic"
         ],
-        "requires": {}
+        "requires": {
+            "acme/base": "^1.2.0"
+        }
     }
 
 The bundle directory for the above manifest would contain:
 
     SKILL.md
     skill.json
+
+### Version constraints
+
+Constraints select versions with comma-separated clauses (all must match).
+
+- `>=1.2.0` at least this version
+- `<=1.2.0` at most this version
+- `>1.2.0` newer than this version
+- `<1.2.0` older than this version
+- `==1.2.0` or `=1.2.0` exactly this version
+- `!=1.2.0` any version except this one
+- `1.2.3` bare version means exact
+- `^1.2.3` compatible release (`>=1.2.3,<2.0.0`; `^0.2.3` means `>=0.2.3,<0.3.0`; `^0.0.3` means `==0.0.3`)
+- `~1.2.3` patch-compatible release (`>=1.2.3,<1.3.0`)
+- `*` or empty means any version
+
+Example:
+
+    skillden install acme/demo@">=1.2.0,<2.0.0"
 
 ## Agent Support
 
@@ -257,3 +306,5 @@ Integrity model:
   exfiltration, remote-code-execution, and destructive patterns; high
   findings block the install (exit code 3) unless `--allow-risky` is given.
 - No partial or unverified files are left in the destination on failure.
+- `install` resolves `requires` constraints to exact versions and pins
+  them in `./skillden.lock` with content hashes for reproducibility.
