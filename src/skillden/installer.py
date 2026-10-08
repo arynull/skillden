@@ -9,6 +9,11 @@ from pathlib import Path
 
 from .agents import AGENTS, skill_dir
 from .registry import RegistryError
+from .resolver import ConstraintError as _ConstraintError
+from .resolver import ResolutionError
+from .resolver import VersionError as _VersionError
+from .resolver import resolve as _resolve
+from .resolver import select_version as _select_version
 from .scanner import SecurityBlocked, scan_bundle
 
 
@@ -53,8 +58,8 @@ def _check_agent(agent):
         raise RegistryError(f"unknown agent: {agent}")
 
 
-def install(
-    registry, name, version=None, agent="generic", force=False, allow_risky=False
+def _install_bundle(
+    registry, name, version, agent="generic", force=False, allow_risky=False
 ) -> Path:
     from .agents import AGENTS as _AGENTS
     from .agents import skill_dir as _skill_dir
@@ -154,6 +159,94 @@ def install(
     finally:
         if not success:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+def install(
+    registry,
+    name,
+    version=None,
+    agent="generic",
+    force=False,
+    allow_risky=False,
+    with_deps=True,
+) -> Path:
+    from .agents import AGENTS as _AGENTS
+    from .registry import RegistryError as _RegistryError
+
+    if (isinstance(_AGENTS, dict) and agent not in _AGENTS) or (
+        isinstance(_AGENTS, (list, tuple, set)) and agent not in _AGENTS
+    ):
+        raise _RegistryError(f"unknown agent: {agent}")
+
+    try:
+        versions = registry.list_versions(name)
+    except _RegistryError:
+        raise
+    except Exception as exc:
+        raise _RegistryError(f"unknown skill: {name}") from exc
+
+    if not versions:
+        raise _RegistryError(f"unknown skill: {name}")
+
+    if version is None:
+        resolved_version = versions[-1]
+        resolve_constraint = "*"
+    elif version in versions:
+        resolved_version = version
+        resolve_constraint = version
+    else:
+        try:
+            selected = _select_version(registry, name, version)
+        except (_ConstraintError, _VersionError):
+            raise ResolutionError(
+                f"no version of {name} satisfies {version!r}"
+            ) from None
+        if selected is None:
+            raise ResolutionError(f"no version of {name} satisfies {version!r}")
+        resolved_version = selected
+        resolve_constraint = version
+
+    for inst in registry.list_installs():
+        if (
+            inst.get("skill_name") == name
+            and inst.get("version") == resolved_version
+            and inst.get("agent") == agent
+        ):
+            if not force:
+                raise _RegistryError(
+                    f"already installed: {name} {resolved_version} for {agent}"
+                )
+            break
+
+    if not with_deps:
+        return _install_bundle(
+            registry, name, resolved_version, agent, force, allow_risky
+        )
+
+    try:
+        pins = _resolve(registry, name, resolve_constraint)
+    except (_ConstraintError, _VersionError) as exc:
+        raise ResolutionError(
+            f"no version of {name} satisfies {resolve_constraint!r}"
+        ) from exc
+
+    for dep_name, dep_version in pins:
+        if dep_name == name:
+            continue
+        already = False
+        for inst in registry.list_installs():
+            if (
+                inst.get("skill_name") == dep_name
+                and inst.get("version") == dep_version
+                and inst.get("agent") == agent
+            ):
+                already = True
+                break
+        if already and not force:
+            continue
+        _install_bundle(registry, dep_name, dep_version, agent, True, allow_risky)
+
+    return _install_bundle(registry, name, resolved_version, agent, force, allow_risky)
 
 
 @contextlib.contextmanager
