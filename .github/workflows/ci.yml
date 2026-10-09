@@ -48,3 +48,26 @@ jobs:
           $SD uninstall acme/demo --agent generic
           test ! -d .skills/demo
           echo "smoke OK"
+      - name: CLI smoke test (project pin / sync / unpin)
+        run: |
+          export SKILLDEN_DATA_DIR="$(mktemp -d)"
+          SD=/tmp/ci-venv/bin/skillden
+          BUNDLE="$(mktemp -d)"
+          PROJ="$(mktemp -d)"
+          printf '# Demo skill\nDo demo things.\n' > "$BUNDLE/SKILL.md"
+          cat > "$BUNDLE/skill.json" <<'EOF'
+          {"name": "acme/demo", "version": "0.1.0", "author": "acme", "description": "Demo skill for CI smoke",
+           "entry": "SKILL.md", "files": ["SKILL.md", "skill.json"], "license": "MIT"}
+          EOF
+          $SD registry add "$BUNDLE/skill.json" --bundle "$BUNDLE"
+          cd "$PROJ"
+          $SD pin acme/demo | grep -q "pinned acme/demo@0.1.0"
+          test -f .skillden/pins.json
+          test -f .skills/demo/SKILL.md
+          rm -rf .skills
+          $SD sync | grep -q "installed acme/demo@0.1.0"
+          test -f .skills/demo/SKILL.md
+          $SD sync | grep -q "unchanged acme/demo@0.1.0"
+          $SD unpin acme/demo | grep -q "unpinned acme/demo"
+          test ! -d .skills/demo
+          echo "project smoke OK"
