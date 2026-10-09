@@ -175,6 +175,58 @@ Reinstalls any dependency whose resolved version changed and rewrites
 `./skillden.lock`. If `@constraint` is omitted every dependency floats
 to its newest registered version.
 
+### pin
+
+Pin a skill (and its dependencies) to the current project.
+
+Usage:
+
+    pin <author/skill>[@spec] [--agent {claude-code,cursor,generic}] [--force] [--allow-risky] [--no-deps]
+
+Example:
+
+    skillden pin acme/demo@^1.0.0
+
+Creates `.skillden/` in the current directory when absent (or uses the
+nearest parent directory containing `.skillden/`), resolves `@spec` to exact
+versions, installs everything into the project-local `.skills/` directory
+through the usual integrity and security gates, and records exact versions
+plus content hashes in `.skillden/pins.json`.
+
+### unpin
+
+Remove a skill from the current project.
+
+Usage:
+
+    unpin <author/skill> [--agent {claude-code,cursor,generic}]
+
+Example:
+
+    skillden unpin acme/demo
+
+Removes the pin from `.skillden/pins.json`, deletes the project-local skill
+directory, and drops the matching install record. Fails with exit code 1
+when run outside a project.
+
+### sync
+
+Rebuild the project-local `.skills/` directory from `.skillden/pins.json`.
+
+Usage:
+
+    sync [--force] [--allow-risky]
+
+Example:
+
+    skillden sync
+
+Installs every pinned skill at its exact pinned version, verifying the
+recorded content hash against the registry first — any mismatch aborts with
+exit code 2. Skills already installed are reported as `unchanged`; use
+`--force` to reinstall everything. Fails with exit code 1 when run outside
+a project.
+
 ### --version
 
 Print the skillden version.
@@ -284,6 +336,23 @@ Example:
 Install locations are per skill name. For example installing `acme/demo` for `claude-code` creates `~/.claude/skills/acme-demo` content or an equivalent namespaced directory.
 
 If `--agent` is not given, `generic` is used as the default target.
+
+## Project Environments
+
+A project is any directory containing a `.skillden/` subdirectory. `pin`
+records exact skill versions (with content hashes) in
+`.skillden/pins.json` and installs the skill files into the project-local
+`.skills/` directory, isolated from your global installs.
+
+Usage:
+
+    cd my-project
+    skillden pin acme/demo@^1.0.0
+    skillden sync
+
+`sync` rebuilds `.skills/` from `.skillden/pins.json` — run it on a fresh
+checkout to reproduce the exact same skill tree with no network access.
+`unpin` removes a skill from the project.
 
 ## Data Directory and Integrity
 
