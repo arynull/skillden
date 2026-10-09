@@ -41,7 +41,17 @@ except ImportError:  # pragma: no cover
         raise ResolutionError("resolver subsystem unavailable")
 
 
-VERSION = "0.3.0"
+from skillden.project import (
+    Project,
+    ProjectError,
+    find_project_root,
+    init_project,
+    pin_skill,
+    sync_project,
+    unpin_skill,
+)
+
+VERSION = "0.4.0"
 AGENT_CHOICES = ["claude-code", "cursor", "generic"]
 
 
@@ -446,6 +456,101 @@ def _cmd_update(args) -> int:
     return 0
 
 
+def _cmd_pin(args) -> int:
+    name, spec = _parse_skill_ref(args.skill)
+    constraint = spec if spec is not None else "*"
+    agent = args.agent
+    force = bool(getattr(args, "force", False))
+    allow_risky = bool(getattr(args, "allow_risky", False))
+    with_deps = not bool(getattr(args, "no_deps", False))
+    root = find_project_root() or init_project(Path.cwd())
+    project = Project(root)
+    reg = Registry()
+    try:
+        pinned = pin_skill(
+            reg,
+            project,
+            name,
+            constraint,
+            agent=agent,
+            force=force,
+            allow_risky=allow_risky,
+            with_deps=with_deps,
+        )
+    except IntegrityError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    except SecurityBlocked as e:
+        print(
+            f"error: security scan blocked pin of {name}: "
+            f"{e.report.summary()} (use --allow-risky to override)",
+            file=sys.stderr,
+        )
+        return 3
+    except (ResolutionError, RegistryError, ProjectError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    for n, v in pinned:
+        print(f"pinned {n}@{v}")
+    print(f"project: {root}")
+    return 0
+
+
+def _cmd_unpin(args) -> int:
+    name, _ver = _parse_skill_ref(args.skill)
+    agent = args.agent
+    root = find_project_root()
+    if root is None:
+        print(
+            "error: not inside a skillden project (no .skillden/ found)",
+            file=sys.stderr,
+        )
+        return 1
+    project = Project(root)
+    reg = Registry()
+    try:
+        removed = unpin_skill(reg, project, name, agent=agent)
+    except (RegistryError, ProjectError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(f"unpinned {name}" if removed else f"not pinned: {name}")
+    return 0
+
+
+def _cmd_sync(args) -> int:
+    force = bool(getattr(args, "force", False))
+    allow_risky = bool(getattr(args, "allow_risky", False))
+    root = find_project_root()
+    if root is None:
+        print(
+            "error: not inside a skillden project (no .skillden/ found)",
+            file=sys.stderr,
+        )
+        return 1
+    project = Project(root)
+    reg = Registry()
+    try:
+        results = sync_project(reg, project, force=force, allow_risky=allow_risky)
+    except IntegrityError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    except SecurityBlocked as e:
+        print(
+            f"error: security scan blocked sync: "
+            f"{e.report.summary()} (use --allow-risky to override)",
+            file=sys.stderr,
+        )
+        return 3
+    except (ResolutionError, RegistryError, ProjectError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    if not results:
+        print("nothing to sync")
+    for n, v, action in results:
+        print(f"{action} {n}@{v}")
+    return 0
+
+
 def _cmd_list(args) -> int:
     reg = Registry()
     try:
@@ -477,7 +582,7 @@ def _cmd_uninstall(args) -> int:
 
 def build_parser():
     parser = argparse.ArgumentParser(prog="skillden")
-    parser.add_argument("--version", action="version", version="skillden 0.3.0")
+    parser.add_argument("--version", action="version", version="skillden 0.4.0")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_reg = sub.add_parser("registry", help="registry operations")
@@ -534,6 +639,46 @@ def build_parser():
         help="install even if the security scan blocks it",
     )
     p_update.set_defaults(func=_cmd_update)
+
+    p_pin = sub.add_parser("pin", help="pin a skill to the current project")
+    p_pin.add_argument("skill", help="author/skill[@spec]")
+    p_pin.add_argument(
+        "--agent",
+        choices=AGENT_CHOICES,
+        default="generic",
+        help="target agent",
+    )
+    p_pin.add_argument("--force", action="store_true", help="force reinstall")
+    p_pin.add_argument(
+        "--allow-risky",
+        action="store_true",
+        help="install even if the security scan blocks it",
+    )
+    p_pin.add_argument(
+        "--no-deps",
+        action="store_true",
+        help="pin only the named skill",
+    )
+    p_pin.set_defaults(func=_cmd_pin)
+
+    p_unpin = sub.add_parser("unpin", help="remove a skill from the project")
+    p_unpin.add_argument("skill", help="author/skill")
+    p_unpin.add_argument(
+        "--agent",
+        choices=AGENT_CHOICES,
+        default="generic",
+        help="target agent",
+    )
+    p_unpin.set_defaults(func=_cmd_unpin)
+
+    p_sync = sub.add_parser("sync", help="rebuild .skills/ from project pins")
+    p_sync.add_argument("--force", action="store_true", help="reinstall every pin")
+    p_sync.add_argument(
+        "--allow-risky",
+        action="store_true",
+        help="install even if the security scan blocks it",
+    )
+    p_sync.set_defaults(func=_cmd_sync)
 
     p_list = sub.add_parser("list", help="list installs")
     p_list.set_defaults(func=_cmd_list)
