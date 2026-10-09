@@ -58,11 +58,23 @@ def _check_agent(agent):
         raise RegistryError(f"unknown agent: {agent}")
 
 
+def _dest_for(name, agent, dest_root=None) -> Path:
+    if dest_root is not None:
+        dirname = name.strip().strip("/").split("/")[-1]
+        return Path(dest_root) / ".skills" / dirname
+    return _resolve_dest(agent, name)
+
+
 def _install_bundle(
-    registry, name, version, agent="generic", force=False, allow_risky=False
+    registry,
+    name,
+    version,
+    agent="generic",
+    force=False,
+    allow_risky=False,
+    dest_root=None,
 ) -> Path:
     from .agents import AGENTS as _AGENTS
-    from .agents import skill_dir as _skill_dir
     from .registry import RegistryError as _RegistryError
 
     if (isinstance(_AGENTS, dict) and agent not in _AGENTS) or (
@@ -88,25 +100,18 @@ def _install_bundle(
     if content_sha256 is None:
         raise _RegistryError(f"version record missing content_sha256: {name} {version}")
 
-    # Already installed check.
+    dest = _dest_for(name, agent, dest_root)
+
     for inst in registry.list_installs():
         if (
             inst.get("skill_name") == name
             and inst.get("version") == version
             and inst.get("agent") == agent
+            and str(inst.get("dest_path")) == str(dest)
         ):
             if not force:
                 raise _RegistryError(f"already installed: {name} {version} for {agent}")
             break
-
-    # Resolve destination directory.
-    try:
-        dest = Path(_skill_dir(agent, name))
-    except TypeError:
-        try:
-            dest = Path(_skill_dir(name, agent))
-        except TypeError:
-            dest = Path(_skill_dir(name))
 
     parent = dest.parent
     parent.mkdir(parents=True, exist_ok=True)
@@ -169,6 +174,7 @@ def install(
     force=False,
     allow_risky=False,
     with_deps=True,
+    dest_root=None,
 ) -> Path:
     from .agents import AGENTS as _AGENTS
     from .registry import RegistryError as _RegistryError
@@ -206,11 +212,13 @@ def install(
         resolved_version = selected
         resolve_constraint = version
 
+    root_dest = _dest_for(name, agent, dest_root)
     for inst in registry.list_installs():
         if (
             inst.get("skill_name") == name
             and inst.get("version") == resolved_version
             and inst.get("agent") == agent
+            and str(inst.get("dest_path")) == str(root_dest)
         ):
             if not force:
                 raise _RegistryError(
@@ -220,7 +228,7 @@ def install(
 
     if not with_deps:
         return _install_bundle(
-            registry, name, resolved_version, agent, force, allow_risky
+            registry, name, resolved_version, agent, force, allow_risky, dest_root
         )
 
     try:
@@ -234,19 +242,25 @@ def install(
         if dep_name == name:
             continue
         already = False
+        dep_dest = _dest_for(dep_name, agent, dest_root)
         for inst in registry.list_installs():
             if (
                 inst.get("skill_name") == dep_name
                 and inst.get("version") == dep_version
                 and inst.get("agent") == agent
+                and str(inst.get("dest_path")) == str(dep_dest)
             ):
                 already = True
                 break
         if already and not force:
             continue
-        _install_bundle(registry, dep_name, dep_version, agent, True, allow_risky)
+        _install_bundle(
+            registry, dep_name, dep_version, agent, True, allow_risky, dest_root
+        )
 
-    return _install_bundle(registry, name, resolved_version, agent, force, allow_risky)
+    return _install_bundle(
+        registry, name, resolved_version, agent, force, allow_risky, dest_root
+    )
 
 
 @contextlib.contextmanager

@@ -218,10 +218,10 @@ class Registry:
     def record_install(self, name, version, agent, dest_path):
         now = self._now_iso()
         with self._connect() as conn:
-            # Replace any existing row for same (skill_name, agent) to avoid duplicates.
             conn.execute(
-                "DELETE FROM installs WHERE skill_name = ? AND agent = ?",
-                (name, agent),
+                "DELETE FROM installs WHERE skill_name = ? AND agent = ? "
+                "AND dest_path = ?",
+                (name, agent, str(dest_path)),
             )
             conn.execute(
                 "INSERT INTO installs(skill_name, version, agent, "
@@ -234,6 +234,14 @@ class Registry:
             conn.execute(
                 "DELETE FROM installs WHERE skill_name = ? AND agent = ?",
                 (name, agent),
+            )
+
+    def remove_install_path(self, name, agent, dest_path):
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM installs WHERE skill_name = ? AND agent = ? "
+                "AND dest_path = ?",
+                (name, agent, str(dest_path)),
             )
 
     def list_installs(self) -> list[dict]:
