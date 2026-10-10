@@ -55,6 +55,16 @@ VERSION = "0.4.0"
 AGENT_CHOICES = ["claude-code", "cursor", "generic"]
 
 
+def _positive_int(value):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"invalid positive int value: {value!r}")
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError(f"must be a positive int: {value!r}")
+    return parsed
+
+
 def _parse_skill_ref(ref):
     ref = (ref or "").strip()
     if "@" in ref:
@@ -214,6 +224,9 @@ def _cmd_search(args) -> int:
     except RegistryError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
+    limit = getattr(args, "limit", None)
+    if limit is not None:
+        results = results[:limit]
     if not results:
         print("no skills found")
         return 0
@@ -594,6 +607,12 @@ def build_parser():
 
     p_search = sub.add_parser("search", help="search skills")
     p_search.add_argument("query", help="search query")
+    p_search.add_argument(
+        "--limit",
+        type=_positive_int,
+        default=None,
+        help="maximum number of results to show (default: all)",
+    )
     p_search.set_defaults(func=_cmd_search)
 
     p_info = sub.add_parser("info", help="show skill info")
