@@ -51,7 +51,7 @@ from skillden.project import (
     unpin_skill,
 )
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 AGENT_CHOICES = ["claude-code", "cursor", "generic"]
 
 
