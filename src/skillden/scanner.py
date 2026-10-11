@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NotRequired, TypedDict
 
 MAX_FILE_BYTES = 1 << 20
 MAX_LINE_LEN = 5000
@@ -45,7 +46,15 @@ class SecurityBlocked(Exception):
         super().__init__(report.summary())
 
 
-RULES = [
+class _Rule(TypedDict):
+    id: str
+    severity: str
+    pattern: re.Pattern[str]
+    message: str
+    also: NotRequired[re.Pattern[str]]
+
+
+RULES: list[_Rule] = [
     {
         "id": "prompt-inject-ignore",
         "severity": "high",

@@ -35,19 +35,7 @@ def _hash_dir(bundle_dir: Path) -> str:
 
 
 def _resolve_dest(agent, name) -> Path:
-    # skill_dir is expected to be skill_dir(agent, name).
-    # Fall back to alternate ordering for compatibility.
-    try:
-        return Path(skill_dir(agent, name))
-    except TypeError as e:
-        # Incompatible signature; try alternate ordering.
-        _ = e
-    try:
-        return Path(skill_dir(name, agent))
-    except TypeError as e:
-        # Incompatible signature; fall back to single-arg form.
-        _ = e
-    return Path(skill_dir(name))
+    return skill_dir(agent, name)
 
 
 def _check_agent(agent):

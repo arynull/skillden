@@ -15,17 +15,13 @@ from skillden.scanner import scan_bundle
 try:
     from skillden.agents import AGENTS
 except ImportError:  # pragma: no cover
-    AGENTS = {
-        "claude-code": {},
-        "cursor": {},
-        "generic": {},
-    }
+    AGENTS: dict[str, str] = {}  # type: ignore[no-redef]
 
 try:
     from skillden.lockfile import write_lock
 except ImportError:  # pragma: no cover
 
-    def write_lock(*args, **kwargs):
+    def write_lock(path, root, constraint, pins) -> None:
         raise OSError("lockfile subsystem unavailable")
 
 
@@ -37,7 +33,9 @@ except ImportError:  # pragma: no cover
     class ResolutionError(Exception):  # type: ignore[no-redef]
         pass
 
-    def _resolve_skill(*args, **kwargs):
+    def _resolve_skill(
+        registry, root_name: str, root_constraint: str = "*"
+    ) -> list[tuple[str, str]]:
         raise ResolutionError("resolver subsystem unavailable")
 
 
@@ -51,7 +49,7 @@ from skillden.project import (
     unpin_skill,
 )
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 AGENT_CHOICES = ["claude-code", "cursor", "generic"]
 
 
@@ -59,7 +57,9 @@ def _positive_int(value):
     try:
         parsed = int(value)
     except (TypeError, ValueError):
-        raise argparse.ArgumentTypeError(f"invalid positive int value: {value!r}")
+        raise argparse.ArgumentTypeError(
+            f"invalid positive int value: {value!r}"
+        ) from None
     if parsed <= 0:
         raise argparse.ArgumentTypeError(f"must be a positive int: {value!r}")
     return parsed
@@ -197,10 +197,7 @@ def _cmd_registry_add(args) -> int:
         return 1
     try:
         reg = Registry()
-        try:
-            name, version = reg.add_skill(manifest, args.bundle)
-        except TypeError:
-            name, version = reg.add_skill(args.bundle)
+        name, version = reg.add_skill(manifest, args.bundle)
         print(f"added {name}@{version}")
         try:
             _report = scan_bundle(Path(args.bundle), manifest)
